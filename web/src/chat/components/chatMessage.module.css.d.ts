@@ -1,4 +1,4 @@
 declare const classNames: {
-  readonly chatMessageAnim: "chatMessageAnim";
+	readonly chatMessageAnim: "chatMessageAnim";
 };
 export default classNames;

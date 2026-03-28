@@ -442,7 +442,7 @@ impl SessionInstance {
 		Ok(())
 	}
 
-	fn state(&self) -> parking_lot::MutexGuard<SessionState> {
+	fn state(&'_ self) -> parking_lot::MutexGuard<'_, SessionState> {
 		self.state.lock()
 	}
 
@@ -1224,7 +1224,7 @@ impl SessionInstance {
 			Some(session_handle),
 		);
 
-		// Send annountement packets to this session from all other existing sessions (its positions and states)
+		// Send announcement packets to this session from all other existing sessions (its positions and states)
 		let other_sessions = room.get_all_sessions(Some(session_handle));
 
 		drop(room); //No more needed in this context
@@ -1486,9 +1486,9 @@ impl SessionInstance {
 		end_x = end_x.max(start_x);
 		end_y = end_y.max(start_y);
 
-		// Chunk limit, max area of 20x20 (400) chunks
-		end_x = end_x.min(start_x + 20);
-		end_y = end_y.min(start_y + 20);
+		// Chunk limit, max area of 32x32 (1024) chunks
+		end_x = end_x.min(start_x + 32);
+		end_y = end_y.min(start_y + 32);
 
 		self.boundary.start_x = start_x;
 		self.boundary.start_y = start_y;
@@ -1525,6 +1525,7 @@ impl SessionInstance {
 		let preview_x = reader.read_i32()?;
 		let preview_y = reader.read_i32()?;
 		let zoom = reader.read_u8()?;
+		let preview_pos = IVec2::new(preview_x, preview_y);
 
 		let mut image_packet = None;
 
@@ -1536,7 +1537,7 @@ impl SessionInstance {
 			.await
 		{
 			image_packet = Some(packet_server::prepare_packet_preview_image(
-				IVec2::new(preview_x, preview_y),
+				preview_pos,
 				zoom,
 				&data,
 			));
@@ -1544,6 +1545,14 @@ impl SessionInstance {
 
 		if let Some(image_packet) = image_packet {
 			self.queue_send.send(image_packet);
+		} else {
+			// no preview at this given chunk, return an empty packet to the user
+			// (the client keeps the count of currently requested previews count to mitigate network
+			// congestion on slower bandwidths)
+			let nothing: [u8; 0] = [];
+			let empty_image_packet =
+				packet_server::prepare_packet_preview_image(preview_pos, zoom, &nothing);
+			self.queue_send.send(empty_image_packet);
 		}
 
 		Ok(())
@@ -1746,7 +1755,7 @@ impl SessionInstance {
 		let cursor_pos = self.state().cursor.pos.clone();
 
 		let in_queue: u32 = (self.chunks_sent as i32 - self.chunks_received as i32) as u32;
-		let to_send: u32 = 20 - in_queue; // Max 20 queued chunks
+		let to_send: u32 = 10 - in_queue; // Max 10 queued chunks
 
 		for _iterations in 0..to_send {
 			// Get closest chunk (circular loading)
@@ -1824,7 +1833,7 @@ impl SessionInstance {
 			}
 		}
 
-		// Deannounce chunks from list
+		// De-announce chunks from list
 		for chunk in &chunks_to_unload {
 			self.unlink_chunk(session_handle, chunk.clone()).await;
 		}

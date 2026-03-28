@@ -94,7 +94,7 @@ impl BrushShape {
 		Self { size, data }
 	}
 
-	pub const fn iterate(&self) -> BrushShapeIter {
+	pub const fn iterate(&'_ self) -> BrushShapeIter<'_> {
 		BrushShapeIter {
 			shape: self,
 			cur_x: 0,

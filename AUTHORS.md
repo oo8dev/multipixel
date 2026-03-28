@@ -1,6 +1,6 @@
 ## Thank you to everyone who took part in this project!
 
-oo8dev (2021-2025): Lead developer
+oo8dev (2021-2026): Lead developer
 
 riki moe (2025): Frontend tips and main logo
 

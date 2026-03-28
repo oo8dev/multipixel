@@ -22,7 +22,7 @@ export enum ChatMessageType {
 }
 
 enum ClientCmd {
-	message = 1,	// u16 text_size, utf-8 text
+	message = 1, // u16 text_size, utf-8 text
 	announce = 2, // u8 room_name_size, utf-8 room_name, u8 nickname_size, utf-8 nickname
 	ping = 4,
 	cursor_pos = 100, // s32 x, s32 y
@@ -31,27 +31,27 @@ enum ClientCmd {
 	boundary = 103,
 	chunks_received = 104,
 	preview_request = 105, // s32 previewX, s32 previewY, u8 zoom
-	tool_type = 200,			 // u8 type
-	tool_color = 201,			 // u8 red, u8 green, u8 blue
-	tool_size = 202,			 // u8 size
-	tool_flow = 203,			 // f32 flow
-	undo = 300
+	tool_type = 200, // u8 type
+	tool_color = 201, // u8 red, u8 green, u8 blue
+	tool_size = 202, // u8 size
+	tool_flow = 203, // f32 flow
+	undo = 300,
 }
 
 enum ServerCmd {
-	message = 1,					  // u8 type, u8 sender_name size, utf-8 sender_name, u16 text size, utf-8 text
-	your_id = 2,						// u16 id
-	kick = 3,								// u16 text size, utf-8 reason
-	chunk_image = 100,			// complex data
+	message = 1, // u8 type, u8 sender_name size, utf-8 sender_name, u16 text size, utf-8 text
+	your_id = 2, // u16 id
+	kick = 3, // u16 text size, utf-8 reason
+	chunk_image = 100, // complex data
 	chunk_pixel_pack = 101, // complex data
-	chunk_create = 110,			// s32 chunkX, s32 chunkY
-	chunk_remove = 111,			// s32 chunkX, s32 chunkY
-	preview_image = 200,		// s32 previewX, s32 previewY, u8 zoom, u32 data size, data
-	user_create = 1000,			// u16 id, u8 nickname size, utf-8 nickname
-	user_remove = 1001,			// u16 id
+	chunk_create = 110, // s32 chunkX, s32 chunkY
+	chunk_remove = 111, // s32 chunkX, s32 chunkY
+	preview_image = 200, // s32 previewX, s32 previewY, u8 zoom, u32 data size, data
+	user_create = 1000, // u16 id, u8 nickname size, utf-8 nickname
+	user_remove = 1001, // u16 id
 	user_cursor_pos = 1002, // u16 id, s32 x, s32 y
 	processing_status_text = 1100, // utf-8 text
-};
+}
 
 function createMessage(command_id: number, command_size: number) {
 	let buf = new ArrayBuffer(header_offset + command_size);
@@ -74,7 +74,7 @@ export class User {
 		this.id = id;
 		this.nickname = nickname;
 	}
-};
+}
 
 import { Buffer } from "buffer";
 import * as lz4 from "lz4js";
@@ -88,6 +88,7 @@ export class Client {
 	id: number = -1;
 	chat: Chat | null = null;
 	connection_callback: (error_str?: string) => void;
+	pending_preview_requests = 0;
 
 	constructor(params: {
 		instance: RoomInstance;
@@ -107,8 +108,7 @@ export class Client {
 			console.log("Socket connected");
 			c.socketSendAnnouncement(params.room_name, params.nickname);
 			params.connection_callback(undefined);
-
-		}
+		};
 	}
 
 	initProtocol() {
@@ -116,17 +116,16 @@ export class Client {
 
 		this.socket!.onmessage = (e) => {
 			this.onmessage(e);
-		}
+		};
 
 		this.socket!.onclose = (e) => {
 			if (e.wasClean) {
 				console.log("Socket disconnected");
-			}
-			else {
+			} else {
 				this.connection_callback("Connection failed: " + e.code);
 				console.log("Socket error: " + e.code);
 			}
-		}
+		};
 	}
 
 	setChatObject(chat: Chat) {
@@ -140,8 +139,10 @@ export class Client {
 		let nickname_utf8 = textToUTF8(nickname);
 		let nickname_utf8_size = nickname_utf8.length;
 
-		let buf = createMessage(ClientCmd.announce,
-			1 + room_name_utf8_size + 1 + nickname_utf8_size);
+		let buf = createMessage(
+			ClientCmd.announce,
+			1 + room_name_utf8_size + 1 + nickname_utf8_size,
+		);
 
 		let buf_u8 = new Uint8Array(buf);
 
@@ -247,11 +248,16 @@ export class Client {
 		let zoom = state.map.getZoom();
 
 		let offset = 0;
-		dataview.setInt32(offset, boundary.start_x); offset += 4;
-		dataview.setInt32(offset, boundary.start_y); offset += 4;
-		dataview.setInt32(offset, boundary.end_x); offset += 4;
-		dataview.setInt32(offset, boundary.end_y); offset += 4;
-		dataview.setFloat32(offset, zoom); offset += 4;
+		dataview.setInt32(offset, boundary.start_x);
+		offset += 4;
+		dataview.setInt32(offset, boundary.start_y);
+		offset += 4;
+		dataview.setInt32(offset, boundary.end_x);
+		offset += 4;
+		dataview.setInt32(offset, boundary.end_y);
+		offset += 4;
+		dataview.setFloat32(offset, zoom);
+		offset += 4;
 		this.socket!.send(buf);
 	}
 
@@ -262,6 +268,7 @@ export class Client {
 		dataview.setInt32(4, y);
 		dataview.setUint8(8, zoom);
 		this.socket!.send(buf);
+		this.pending_preview_requests += 1;
 	}
 
 	socketSendToolType(tool_id: number) {
@@ -288,18 +295,25 @@ export class Client {
 		let command = headerview.getInt16(0);
 
 		const map = this.instance.state ? this.instance.state.map : undefined;
-		const renderer = this.instance.state ? this.instance.state.renderer : undefined;
+		const renderer = this.instance.state
+			? this.instance.state.renderer
+			: undefined;
 
 		switch (command) {
 			case ServerCmd.message: {
 				let offset = 0;
-				let type = dataview.getUint8(offset); offset += 1;
+				let type = dataview.getUint8(offset);
+				offset += 1;
 
-				let sender_name_size = dataview.getUint8(offset); offset += 1;
-				let view_sender = createViewSize(offset, sender_name_size); offset += sender_name_size;
+				let sender_name_size = dataview.getUint8(offset);
+				offset += 1;
+				let view_sender = createViewSize(offset, sender_name_size);
+				offset += sender_name_size;
 
-				let message_size = dataview.getUint16(offset); offset += 2;
-				let view_message = createViewSize(offset, message_size); offset += message_size;
+				let message_size = dataview.getUint16(offset);
+				offset += 2;
+				let view_message = createViewSize(offset, message_size);
+				offset += message_size;
 
 				let str_sender = new TextDecoder().decode(view_sender);
 				let str_message = new TextDecoder().decode(view_message);
@@ -329,13 +343,22 @@ export class Client {
 				}
 
 				let offset = 0;
-				let chunk_x = dataview.getInt32(offset); offset += 4;
-				let chunk_y = dataview.getInt32(offset); offset += 4;
-				let raw_size = dataview.getUint32(offset); offset += 4;
+				let chunk_x = dataview.getInt32(offset);
+				offset += 4;
+				let chunk_y = dataview.getInt32(offset);
+				offset += 4;
+				let raw_size = dataview.getUint32(offset);
+				offset += 4;
 
 				let uncompressed_buffer = Buffer.alloc(raw_size);
 				let compressed_data = raw_data.slice(header_offset + offset);
-				lz4.decompressBlock(Buffer.from(compressed_data), uncompressed_buffer, 0, raw_size, 0);
+				lz4.decompressBlock(
+					Buffer.from(compressed_data),
+					uncompressed_buffer,
+					0,
+					raw_size,
+					0,
+				);
 
 				let rgba_view = new DataView(uncompressed_buffer.buffer);
 				let chunk = map.getChunk(chunk_x, chunk_y);
@@ -352,14 +375,24 @@ export class Client {
 
 				let offset = 0;
 
-				let chunk_x = dataview.getInt32(offset); offset += 4;
-				let chunk_y = dataview.getInt32(offset); offset += 4;
-				let pixel_count = dataview.getUint32(offset); offset += 4;
-				let raw_size = dataview.getUint32(offset); offset += 4;
+				let chunk_x = dataview.getInt32(offset);
+				offset += 4;
+				let chunk_y = dataview.getInt32(offset);
+				offset += 4;
+				let pixel_count = dataview.getUint32(offset);
+				offset += 4;
+				let raw_size = dataview.getUint32(offset);
+				offset += 4;
 
 				let uncompressed_buffer = Buffer.alloc(raw_size);
 				let compressed_data = raw_data.slice(header_offset + offset);
-				lz4.decompressBlock(Buffer.from(compressed_data), uncompressed_buffer, 0, raw_size, 0);
+				lz4.decompressBlock(
+					Buffer.from(compressed_data),
+					uncompressed_buffer,
+					0,
+					raw_size,
+					0,
+				);
 
 				let pixel_view = new DataView(uncompressed_buffer.buffer);
 
@@ -413,19 +446,34 @@ export class Client {
 				}
 
 				let offset = 0;
-				let previewX = dataview.getInt32(offset); offset += 4;
-				let previewY = dataview.getInt32(offset); offset += 4;
-				let zoom = dataview.getUint8(offset); offset += 1;
-				let data_size = dataview.getUint32(offset); offset += 4;
+				let previewX = dataview.getInt32(offset);
+				offset += 4;
+				let previewY = dataview.getInt32(offset);
+				offset += 4;
+				let zoom = dataview.getUint8(offset);
+				offset += 1;
+				let data_size = dataview.getUint32(offset);
+				offset += 4;
 
-				let rgba = Buffer.alloc(CHUNK_SIZE * CHUNK_SIZE * 4);
-				const data_from = header_offset + offset;
-				let compressed = raw_data.slice(data_from, data_from + data_size);
-				lz4.decompressBlock(Buffer.from(compressed), rgba, 0, data_size, 0);
+				if (data_size > 0) {
+					let rgba = Buffer.alloc(CHUNK_SIZE * CHUNK_SIZE * 4);
+					const data_from = header_offset + offset;
+					let compressed = raw_data.slice(data_from, data_from + data_size);
+					lz4.decompressBlock(Buffer.from(compressed), rgba, 0, data_size, 0);
 
-				let preview = this.instance.preview_system.getOrCreateLayer(zoom).getOrCreatePreview(previewX, previewY);
-				preview.setData(new Uint8Array(rgba));
-				map.triggerRerender();
+					let preview = this.instance.preview_system
+						.getOrCreateLayer(zoom)
+						.getOrCreatePreview(previewX, previewY);
+					preview.setData(new Uint8Array(rgba));
+					map.triggerRerender();
+				} else {
+					// The server responded to our request, but there's no preview data at this position.
+					// Just ignore it.
+				}
+
+				this.pending_preview_requests -= 1;
+				//console.log("pending preview requests", this.pending_preview_requests);
+
 				break;
 			}
 			case ServerCmd.user_create: {
@@ -434,9 +482,12 @@ export class Client {
 				}
 
 				let offset = 0;
-				let id = dataview.getUint16(offset); offset += 2;
-				let text_size = dataview.getUint8(offset); offset += 1;
-				let view_str = createViewSize(offset, text_size); offset += text_size;
+				let id = dataview.getUint16(offset);
+				offset += 2;
+				let text_size = dataview.getUint8(offset);
+				offset += 1;
+				let view_str = createViewSize(offset, text_size);
+				offset += text_size;
 				let nickname = new TextDecoder().decode(view_str);
 				this.users[id] = new User(id, nickname);
 				this.instance.updateUserList();
@@ -474,7 +525,7 @@ export class Client {
 			case ServerCmd.processing_status_text: {
 				let text_size = dataview.getInt16(0);
 				let view_str = createViewSize(2, text_size);
-				let status_text = (new TextDecoder().decode(view_str));
+				let status_text = new TextDecoder().decode(view_str);
 				this.instance.setProcessingStatusText(status_text);
 				break;
 			}
@@ -484,4 +535,4 @@ export class Client {
 			}
 		}
 	}
-};
+}
